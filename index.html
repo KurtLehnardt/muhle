@@ -34,6 +34,56 @@
   .voice-toggle { font-size: 0.85rem; }
   #voiceStatus { margin-left: 6px; }
 
+  /* AI Controls */
+  .ai-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+    padding: 12px 18px;
+    background: #16213e;
+    border-radius: 10px;
+    max-width: 600px;
+    width: 100%;
+  }
+  .ai-controls label {
+    font-size: 0.85rem;
+    color: #aaa;
+  }
+  .ai-controls select, .ai-controls input[type="range"] {
+    background: #1a1a2e;
+    color: #eee;
+    border: 1px solid #533483;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .ai-controls select:focus, .ai-controls input[type="range"]:focus {
+    outline: none;
+    border-color: #e94560;
+  }
+  .ai-controls .ai-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ai-controls .ai-group.hidden { display: none; }
+  #pauseBtn {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+  }
+  #speedSlider {
+    width: 80px;
+  }
+  #speedLabel {
+    font-size: 0.8rem;
+    color: #aaa;
+    min-width: 30px;
+  }
+
   .game-area { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
 
   .board-wrap { position: relative; }
@@ -95,19 +145,56 @@
   </label>
 </div>
 
+<div class="ai-controls">
+  <div class="ai-group">
+    <label for="modeSelect">Modus:</label>
+    <select id="modeSelect" onchange="updateGameMode()">
+      <option value="hvh">Mensch vs Mensch</option>
+      <option value="hvk">Mensch vs KI</option>
+      <option value="kvk">KI vs KI</option>
+    </select>
+  </div>
+  <div class="ai-group hidden" id="p1PersonalityGroup">
+    <label for="p1Personality">Weiß:</label>
+    <select id="p1Personality" onchange="updatePersonalities()">
+      <option value="vorsichtig">Vorsichtig</option>
+      <option value="mutig">Mutig</option>
+      <option value="strategisch" selected>Strategisch</option>
+      <option value="schnell">Schnell</option>
+    </select>
+  </div>
+  <div class="ai-group hidden" id="p2PersonalityGroup">
+    <label for="p2Personality">Schwarz:</label>
+    <select id="p2Personality" onchange="updatePersonalities()">
+      <option value="vorsichtig">Vorsichtig</option>
+      <option value="mutig">Mutig</option>
+      <option value="strategisch" selected>Strategisch</option>
+      <option value="schnell">Schnell</option>
+    </select>
+  </div>
+  <div class="ai-group hidden" id="pauseGroup">
+    <button id="pauseBtn" onclick="togglePause()">Pause</button>
+  </div>
+  <div class="ai-group hidden" id="speedGroup">
+    <label for="speedSlider">Tempo:</label>
+    <input type="range" id="speedSlider" min="0.5" max="3" step="0.25" value="1" onchange="updateSpeed()" oninput="updateSpeed()">
+    <span id="speedLabel">1x</span>
+  </div>
+</div>
+
 <div class="game-area">
   <div class="board-wrap">
     <canvas id="board" width="480" height="480" role="img" aria-label="Mühle Spielbrett"></canvas>
   </div>
   <div class="info-panel">
     <div class="player-card" id="card1">
-      <h3>⚪ Spieler 1 (Weiß)</h3>
+      <h3 id="card1Title">⚪ Spieler 1 (Weiß)</h3>
       <div class="stones" id="stones1">Steine in Hand: 9</div>
       <div class="on-board" id="onboard1">Auf dem Brett: 0</div>
       <div class="captured" id="cap1">Gefangen: 0</div>
     </div>
     <div class="player-card" id="card2">
-      <h3>⚫ Spieler 2 (Schwarz)</h3>
+      <h3 id="card2Title">⚫ Spieler 2 (Schwarz)</h3>
       <div class="stones" id="stones2">Steine in Hand: 9</div>
       <div class="on-board" id="onboard2">Auf dem Brett: 0</div>
       <div class="captured" id="cap2">Gefangen: 0</div>
@@ -196,6 +283,15 @@ let selectedPos = -1;
 let gameOver = false;
 let mustRemove = false; // true when a mill was just formed
 let voiceEnabled = true;
+
+// ===== AI STATE =====
+let gameMode = 'hvh';           // 'hvh' | 'hvk' | 'kvk'
+let playerMode = [null, 'human', 'human'];
+let playerPersonality = [null, null, null];
+let aiThinking = false;
+let aiPaused = false;
+let speedMultiplier = 1.0;
+let aiTimeoutId = null;
 
 // ===== CANVAS =====
 const canvas = document.getElementById('board');
@@ -411,11 +507,13 @@ function switchTurn() {
   currentPlayer = nextPlayer;
   selectedPos = -1;
   updateUI();
+  maybeAIMove();
 }
 
 // ===== CLICK HANDLING =====
 canvas.addEventListener('click', e => {
   if (gameOver) return;
+  if (playerMode[currentPlayer] === 'ai') return;
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (SIZE / rect.width);
   const my = (e.clientY - rect.top) * (SIZE / rect.height);
@@ -536,6 +634,419 @@ function handlePlaceOrMove(pos) {
   }
 }
 
+// ===== AI HELPERS =====
+function getValidMoves(player) {
+  const phase = getPhaseForPlayer(player);
+  const moves = [];
+  if (phase === 'place') {
+    for (let i = 0; i < 24; i++) {
+      if (board[i] === 0) moves.push({ type: 'place', to: i });
+    }
+  } else if (phase === 'jump') {
+    for (let from = 0; from < 24; from++) {
+      if (board[from] !== player) continue;
+      for (let to = 0; to < 24; to++) {
+        if (board[to] === 0) moves.push({ type: 'jump', from, to });
+      }
+    }
+  } else {
+    // move phase
+    for (let from = 0; from < 24; from++) {
+      if (board[from] !== player) continue;
+      for (const to of ADJ[from]) {
+        if (board[to] === 0) moves.push({ type: 'move', from, to });
+      }
+    }
+  }
+  return moves;
+}
+
+function getValidRemovals(player) {
+  const opp = player === 1 ? 2 : 1;
+  const removals = [];
+  for (let i = 0; i < 24; i++) {
+    if (board[i] === opp && canRemoveStone(i)) removals.push(i);
+  }
+  return removals;
+}
+
+function randPick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Helper: count how many of a mill line are occupied by a player, with the rest empty
+function millLineInfo(mill, player) {
+  let own = 0, empty = 0, oppCount = 0;
+  const emptyPositions = [];
+  for (const pos of mill) {
+    if (board[pos] === player) own++;
+    else if (board[pos] === 0) { empty++; emptyPositions.push(pos); }
+    else oppCount++;
+  }
+  return { own, empty, oppCount, emptyPositions };
+}
+
+// ===== AI PERSONALITIES =====
+const PERSONALITY_NAMES = {
+  vorsichtig: 'Vorsichtig',
+  mutig: 'Mutig',
+  strategisch: 'Strategisch',
+  schnell: 'Schnell',
+};
+
+const PERSONALITIES = {
+  // === VORSICHTIG: defensive, blocks opponent, avoids exposed positions ===
+  vorsichtig: {
+    baseDelay: 2000,
+    chooseMove(board, player, stonesInHand, getPhaseForPlayer, ADJ, MILLS) {
+      const moves = getValidMoves(player);
+      if (moves.length === 0) return null;
+      const opp = player === 1 ? 2 : 1;
+
+      // Score each move
+      const scored = moves.map(move => {
+        let score = 0;
+        const toPos = move.to;
+
+        // Simulate move
+        const origFrom = move.from !== undefined ? board[move.from] : undefined;
+        const origTo = board[toPos];
+        if (move.from !== undefined) board[move.from] = 0;
+        board[toPos] = player;
+
+        // Check if this blocks an opponent 2-of-3
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          // Before the move, was this an opponent 2-of-3 with this pos empty?
+          // We need to check with the move undone
+          board[toPos] = origTo;
+          if (move.from !== undefined) board[move.from] = origFrom;
+          const info = millLineInfo(mill, opp);
+          if (info.own === 2 && info.empty === 1 && info.emptyPositions.includes(toPos)) {
+            score += 3; // blocking opponent mill
+          }
+          // Redo move
+          if (move.from !== undefined) board[move.from] = 0;
+          board[toPos] = player;
+        }
+
+        // Check if this completes our own mill
+        if (formsMill(toPos, player)) {
+          score += 2;
+        }
+
+        // Prefer positions with more neighbors (safer)
+        score += ADJ[toPos].length * 0.3;
+
+        // Avoid positions where opponent has 2-of-3 targeting us (exposed)
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          const info = millLineInfo(mill, opp);
+          if (info.own === 2 && info.oppCount === 0) {
+            score -= 1; // we're in an exposed line
+          }
+        }
+
+        // Undo
+        board[toPos] = origTo;
+        if (move.from !== undefined) board[move.from] = origFrom;
+
+        return { move, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const best = scored[0].score;
+      const ties = scored.filter(s => s.score === best);
+      return randPick(ties).move;
+    },
+    chooseRemoval(board, player, MILLS, canRemoveStone) {
+      const removals = getValidRemovals(player);
+      if (removals.length === 0) return null;
+      // Pick least dangerous: fewest mill lines the opponent stone participates in
+      const scored = removals.map(pos => {
+        let danger = 0;
+        const opp = player === 1 ? 2 : 1;
+        for (const mill of MILLS) {
+          if (!mill.includes(pos)) continue;
+          const info = millLineInfo(mill, opp);
+          if (info.own >= 1) danger += info.own;
+        }
+        return { pos, danger };
+      });
+      scored.sort((a, b) => a.danger - b.danger);
+      return scored[0].pos;
+    }
+  },
+
+  // === MUTIG: aggressive, prioritizes completing own mills ===
+  mutig: {
+    baseDelay: 750,
+    chooseMove(board, player, stonesInHand, getPhaseForPlayer, ADJ, MILLS) {
+      const moves = getValidMoves(player);
+      if (moves.length === 0) return null;
+
+      const scored = moves.map(move => {
+        let score = 0;
+        const toPos = move.to;
+
+        // Simulate
+        const origFrom = move.from !== undefined ? board[move.from] : undefined;
+        const origTo = board[toPos];
+        if (move.from !== undefined) board[move.from] = 0;
+        board[toPos] = player;
+
+        // Complete own mill
+        if (formsMill(toPos, player)) {
+          score += 5;
+        }
+
+        // Advance own mill line (2-of-3)
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          const info = millLineInfo(mill, player);
+          if (info.own === 2 && info.empty === 1) {
+            score += 2; // we now have 2 in a line
+          }
+        }
+
+        // Undo
+        board[toPos] = origTo;
+        if (move.from !== undefined) board[move.from] = origFrom;
+
+        // Check pre-move for advancing (we had 1, now placing makes 2)
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          const info = millLineInfo(mill, player);
+          if (info.own === 1 && info.empty === 2 && info.emptyPositions.includes(toPos)) {
+            score += 1;
+          }
+        }
+
+        return { move, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const best = scored[0].score;
+      const ties = scored.filter(s => s.score === best);
+      return randPick(ties).move;
+    },
+    chooseRemoval(board, player, MILLS, canRemoveStone) {
+      const removals = getValidRemovals(player);
+      if (removals.length === 0) return null;
+      const opp = player === 1 ? 2 : 1;
+      // Target stone in a 2-of-3 mill line
+      const scored = removals.map(pos => {
+        let value = 0;
+        for (const mill of MILLS) {
+          if (!mill.includes(pos)) continue;
+          const info = millLineInfo(mill, opp);
+          if (info.own >= 2) value += 3;
+          else if (info.own === 1) value += 1;
+        }
+        return { pos, value };
+      });
+      scored.sort((a, b) => b.value - a.value);
+      const best = scored[0].value;
+      const ties = scored.filter(s => s.value === best);
+      return randPick(ties).pos;
+    }
+  },
+
+  // === STRATEGISCH: balanced scoring approach ===
+  strategisch: {
+    baseDelay: 1250,
+    chooseMove(board, player, stonesInHand, getPhaseForPlayer, ADJ, MILLS) {
+      const moves = getValidMoves(player);
+      if (moves.length === 0) return null;
+      const opp = player === 1 ? 2 : 1;
+
+      const scored = moves.map(move => {
+        let score = 0;
+        const toPos = move.to;
+
+        // Simulate move
+        const origFrom = move.from !== undefined ? board[move.from] : undefined;
+        const origTo = board[toPos];
+        if (move.from !== undefined) board[move.from] = 0;
+        board[toPos] = player;
+
+        // +3 complete mill
+        if (formsMill(toPos, player)) {
+          score += 3;
+        }
+
+        // +2 get 2-of-3 (own)
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          const info = millLineInfo(mill, player);
+          if (info.own === 2 && info.empty === 1) {
+            score += 2;
+          }
+        }
+
+        // Undo to check blocking
+        board[toPos] = origTo;
+        if (move.from !== undefined) board[move.from] = origFrom;
+
+        // +2 block opponent 2-of-3
+        for (const mill of MILLS) {
+          if (!mill.includes(toPos)) continue;
+          const info = millLineInfo(mill, opp);
+          if (info.own === 2 && info.empty === 1 && info.emptyPositions.includes(toPos)) {
+            score += 2;
+          }
+        }
+
+        // +1 high-connectivity position (junctions: 4 neighbors)
+        if (ADJ[toPos].length >= 4) {
+          score += 1;
+        }
+
+        // -2 leave own mill undefended (move phase: moving away from a mill we're in)
+        if (move.from !== undefined) {
+          // Simulate leaving
+          board[move.from] = 0;
+          board[toPos] = player;
+          for (const mill of MILLS) {
+            if (!mill.includes(move.from)) continue;
+            // Was it a complete mill before?
+            board[move.from] = player;
+            board[toPos] = origTo;
+            const wasMill = mill.every(i => board[i] === player);
+            board[move.from] = 0;
+            board[toPos] = player;
+            if (wasMill) {
+              score -= 2;
+            }
+          }
+          // Undo
+          board[toPos] = origTo;
+          board[move.from] = origFrom;
+        }
+
+        return { move, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const best = scored[0].score;
+      const ties = scored.filter(s => s.score === best);
+      return randPick(ties).move;
+    },
+    chooseRemoval(board, player, MILLS, canRemoveStone) {
+      const removals = getValidRemovals(player);
+      if (removals.length === 0) return null;
+      const opp = player === 1 ? 2 : 1;
+      // Break opponent's 2-of-3 lines
+      const scored = removals.map(pos => {
+        let value = 0;
+        for (const mill of MILLS) {
+          if (!mill.includes(pos)) continue;
+          const info = millLineInfo(mill, opp);
+          if (info.own >= 2) value += 3;
+          else if (info.own === 1 && info.empty >= 1) value += 1;
+        }
+        return { pos, value };
+      });
+      scored.sort((a, b) => b.value - a.value);
+      const best = scored[0].value;
+      const ties = scored.filter(s => s.value === best);
+      return randPick(ties).pos;
+    }
+  },
+
+  // === SCHNELL: random valid moves ===
+  schnell: {
+    baseDelay: 450,
+    chooseMove(board, player, stonesInHand, getPhaseForPlayer, ADJ, MILLS) {
+      const moves = getValidMoves(player);
+      if (moves.length === 0) return null;
+      return randPick(moves);
+    },
+    chooseRemoval(board, player, MILLS, canRemoveStone) {
+      const removals = getValidRemovals(player);
+      if (removals.length === 0) return null;
+      return randPick(removals);
+    }
+  }
+};
+
+// ===== AI ORCHESTRATOR =====
+function maybeAIMove() {
+  if (gameOver || aiPaused || playerMode[currentPlayer] !== 'ai') return;
+  aiThinking = true;
+  const personality = PERSONALITIES[playerPersonality[currentPlayer]];
+  const delay = personality.baseDelay / speedMultiplier;
+  const jitter = delay * (0.8 + Math.random() * 0.4);
+  aiTimeoutId = setTimeout(() => {
+    if (gameOver || aiPaused) { aiThinking = false; return; }
+    if (mustRemove) {
+      const pos = personality.chooseRemoval(board, currentPlayer, MILLS, canRemoveStone);
+      if (pos !== null) handleRemove(pos);
+      aiThinking = false;
+    } else {
+      const move = personality.chooseMove(board, currentPlayer, stonesInHand, getPhaseForPlayer, ADJ, MILLS);
+      if (!move) { aiThinking = false; return; }
+      if (move.type === 'place') {
+        handlePlaceOrMove(move.to);
+      } else {
+        selectedPos = move.from;
+        handlePlaceOrMove(move.to);
+      }
+      aiThinking = false;
+      // After handlePlaceOrMove, if mustRemove is true (mill formed), schedule removal
+      if (mustRemove && playerMode[currentPlayer] === 'ai') {
+        maybeAIMove();
+      }
+    }
+  }, jitter);
+}
+
+// ===== AI CONTROLS =====
+function updateGameMode() {
+  const mode = document.getElementById('modeSelect').value;
+  gameMode = mode;
+  if (mode === 'hvh') {
+    playerMode = [null, 'human', 'human'];
+    playerPersonality = [null, null, null];
+  } else if (mode === 'hvk') {
+    playerMode = [null, 'human', 'ai'];
+    playerPersonality = [null, null, document.getElementById('p2Personality').value];
+  } else {
+    playerMode = [null, 'ai', 'ai'];
+    playerPersonality = [null, document.getElementById('p1Personality').value, document.getElementById('p2Personality').value];
+  }
+
+  // Show/hide controls
+  document.getElementById('p1PersonalityGroup').classList.toggle('hidden', mode !== 'kvk');
+  document.getElementById('p2PersonalityGroup').classList.toggle('hidden', mode === 'hvh');
+  document.getElementById('pauseGroup').classList.toggle('hidden', mode !== 'kvk');
+  document.getElementById('speedGroup').classList.toggle('hidden', mode !== 'kvk');
+
+  newGame();
+}
+
+function updatePersonalities() {
+  if (gameMode === 'hvk') {
+    playerPersonality[2] = document.getElementById('p2Personality').value;
+  } else if (gameMode === 'kvk') {
+    playerPersonality[1] = document.getElementById('p1Personality').value;
+    playerPersonality[2] = document.getElementById('p2Personality').value;
+  }
+}
+
+function togglePause() {
+  aiPaused = !aiPaused;
+  document.getElementById('pauseBtn').textContent = aiPaused ? 'Weiter' : 'Pause';
+  if (!aiPaused) {
+    maybeAIMove();
+  }
+}
+
+function updateSpeed() {
+  speedMultiplier = parseFloat(document.getElementById('speedSlider').value);
+  document.getElementById('speedLabel').textContent = speedMultiplier + 'x';
+}
+
 // ===== UI =====
 function updateUI() {
   const phase = getPhaseForPlayer(currentPlayer);
@@ -554,6 +1065,18 @@ function updateUI() {
   document.getElementById('cap1').textContent = `Gefangen: ${capturedBy[1]}`;
   document.getElementById('cap2').textContent = `Gefangen: ${capturedBy[2]}`;
 
+  // Update player card titles with AI personality if applicable
+  if (playerMode[1] === 'ai' && playerPersonality[1]) {
+    document.getElementById('card1Title').textContent = `⚪ KI — ${PERSONALITY_NAMES[playerPersonality[1]]}`;
+  } else {
+    document.getElementById('card1Title').textContent = '⚪ Spieler 1 (Weiß)';
+  }
+  if (playerMode[2] === 'ai' && playerPersonality[2]) {
+    document.getElementById('card2Title').textContent = `⚫ KI — ${PERSONALITY_NAMES[playerPersonality[2]]}`;
+  } else {
+    document.getElementById('card2Title').textContent = '⚫ Spieler 2 (Schwarz)';
+  }
+
   document.getElementById('card1').classList.toggle('active', currentPlayer === 1 && !gameOver);
   document.getElementById('card2').classList.toggle('active', currentPlayer === 2 && !gameOver);
 
@@ -565,6 +1088,15 @@ function setStatus(msg) {
 }
 
 function newGame() {
+  // Clear any pending AI timeout
+  if (aiTimeoutId !== null) {
+    clearTimeout(aiTimeoutId);
+    aiTimeoutId = null;
+  }
+  aiThinking = false;
+  aiPaused = false;
+  document.getElementById('pauseBtn').textContent = 'Pause';
+
   board = Array(24).fill(0);
   currentPlayer = 1;
   stonesInHand = [0, 9, 9];
@@ -574,6 +1106,9 @@ function newGame() {
   gameOver = false;
   updateUI();
   speak('Neues Spiel! Spieler 1, Weiß, beginnt.');
+
+  // If player 1 is AI, start AI
+  maybeAIMove();
 }
 
 // ===== INIT =====
