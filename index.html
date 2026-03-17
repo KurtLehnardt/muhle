@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mühle — Deutsche Sprachausgabe</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    user-select: none;
+  }
+  h1 { margin-bottom: 6px; font-size: 1.8rem; color: #e94560; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 12px; }
+  .controls { margin: 8px 0 14px; display: flex; gap: 10px; align-items: center; }
+  button {
+    background: #e94560;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background 0.2s;
+  }
+  button:hover { background: #c73650; }
+  .voice-toggle { font-size: 0.85rem; }
+  #voiceStatus { margin-left: 6px; }
+
+  .game-area { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+
+  .board-wrap { position: relative; }
+  canvas { cursor: pointer; border-radius: 10px; }
+
+  .info-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 180px;
+  }
+  .player-card {
+    padding: 14px;
+    border-radius: 10px;
+    background: #16213e;
+    border: 2px solid transparent;
+    transition: border-color 0.3s;
+  }
+  .player-card.active { border-color: #e94560; }
+  .player-card h3 { font-size: 1rem; margin-bottom: 6px; }
+  .player-card .stones { font-size: 0.9rem; color: #aaa; }
+  .player-card .on-board { font-size: 0.9rem; color: #a8e6cf; }
+  .player-card .captured { font-size: 0.85rem; color: #e94560; }
+
+  .status {
+    margin-top: 14px;
+    font-size: 1.05rem;
+    color: #a8e6cf;
+    min-height: 28px;
+    text-align: center;
+    max-width: 500px;
+  }
+  .phase-info {
+    font-size: 0.85rem;
+    color: #777;
+    margin-top: 4px;
+  }
+  .rules {
+    margin-top: 20px;
+    max-width: 500px;
+    background: #16213e;
+    padding: 16px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #aaa;
+  }
+  .rules summary { color: #e94560; cursor: pointer; font-size: 0.95rem; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<h1>Mühle</h1>
+<div class="subtitle">Neun-Steine-Spiel mit deutscher Sprachausgabe</div>
+<div class="controls">
+  <button onclick="newGame()">Neues Spiel</button>
+  <label class="voice-toggle">
+    <input type="checkbox" id="voiceOn" checked onchange="toggleVoice()">
+    <span id="voiceStatus">🔊 Sprache an</span>
+  </label>
+</div>
+
+<div class="game-area">
+  <div class="board-wrap">
+    <canvas id="board" width="480" height="480" role="img" aria-label="Mühle Spielbrett"></canvas>
+  </div>
+  <div class="info-panel">
+    <div class="player-card" id="card1">
+      <h3>⚪ Spieler 1 (Weiß)</h3>
+      <div class="stones" id="stones1">Steine in Hand: 9</div>
+      <div class="on-board" id="onboard1">Auf dem Brett: 0</div>
+      <div class="captured" id="cap1">Gefangen: 0</div>
+    </div>
+    <div class="player-card" id="card2">
+      <h3>⚫ Spieler 2 (Schwarz)</h3>
+      <div class="stones" id="stones2">Steine in Hand: 9</div>
+      <div class="on-board" id="onboard2">Auf dem Brett: 0</div>
+      <div class="captured" id="cap2">Gefangen: 0</div>
+    </div>
+  </div>
+</div>
+
+<div class="status" id="status">Spieler 1 (Weiß) ist dran — Stein setzen</div>
+<div class="phase-info" id="phaseInfo">Setzphase</div>
+
+<details class="rules">
+  <summary>Spielregeln</summary>
+  <p><strong>Setzphase:</strong> Abwechselnd setzen beide Spieler je einen Stein auf einen freien Punkt.</p>
+  <p><strong>Zugphase:</strong> Wenn alle Steine gesetzt sind, werden Steine entlang der Linien auf benachbarte freie Punkte gezogen.</p>
+  <p><strong>Sprungphase:</strong> Ein Spieler mit nur noch 3 Steinen darf auf jeden freien Punkt springen.</p>
+  <p><strong>Mühle:</strong> Wer drei Steine in einer Reihe hat, darf einen gegnerischen Stein entfernen (nicht aus einer Mühle, es sei denn, alle Steine sind in Mühlen).</p>
+  <p><strong>Gewonnen:</strong> Wer den Gegner auf 2 Steine reduziert oder ihm alle Züge blockiert, gewinnt.</p>
+</details>
+
+<script>
+// ===== BOARD TOPOLOGY =====
+// 24 positions on a Mühle board, labeled 0..23
+// Positions laid out on a grid (row, col) for drawing:
+const POS_COORDS = [
+  [0,0],[0,3],[0,6],  // 0,1,2     outer ring top
+  [1,1],[1,3],[1,5],  // 3,4,5     middle ring top
+  [2,2],[2,3],[2,4],  // 6,7,8     inner ring top
+  [3,0],[3,1],[3,2],  // 9,10,11   left side
+  [3,4],[3,5],[3,6],  // 12,13,14  right side
+  [4,2],[4,3],[4,4],  // 15,16,17  inner ring bottom
+  [5,1],[5,3],[5,5],  // 18,19,20  middle ring bottom
+  [6,0],[6,3],[6,6],  // 21,22,23  outer ring bottom
+];
+
+// Adjacency list
+const ADJ = [
+  [1,9],        // 0
+  [0,2,4],      // 1
+  [1,14],       // 2
+  [4,10],       // 3
+  [1,3,5,7],    // 4
+  [4,13],       // 5
+  [7,11],       // 6
+  [4,6,8],      // 7
+  [7,12],       // 8
+  [0,10,21],    // 9
+  [3,9,11,18],  // 10
+  [6,10,15],    // 11
+  [8,13,17],    // 12
+  [5,12,14,20], // 13
+  [2,13,23],    // 14
+  [11,16],      // 15
+  [15,17,19],   // 16
+  [12,16],      // 17
+  [10,19,21],   // 18
+  [16,18,20,22],// 19
+  [13,19,23],   // 20
+  [9,18,22],    // 21
+  [19,21,23],   // 22
+  [14,20,22],   // 23
+];
+
+// Mills (all possible lines of 3)
+const MILLS = [
+  [0,1,2],[3,4,5],[6,7,8],           // top rows
+  [9,10,11],[12,13,14],              // mid rows
+  [15,16,17],[18,19,20],[21,22,23],  // bottom rows
+  [0,9,21],[3,10,18],[6,11,15],      // left cols
+  [1,4,7],[16,19,22],               // mid cols
+  [8,12,17],[5,13,20],[2,14,23],     // right cols
+];
+
+// Position names for voice
+const POS_NAMES = (() => {
+  const rows = ['A','B','C','D','E','F','G'];
+  const cols = ['1','2','3','4','5','6','7'];
+  return POS_COORDS.map(([r,c]) => rows[r] + cols[c]);
+})();
+
+// ===== GAME STATE =====
+let board = [];       // 0=empty, 1=player1, 2=player2
+let currentPlayer = 1;
+let stonesInHand = [0, 9, 9]; // index 0 unused
+let capturedBy = [0, 0, 0];   // stones captured by each player
+let selectedPos = -1;
+let gameOver = false;
+let mustRemove = false; // true when a mill was just formed
+let voiceEnabled = true;
+
+// ===== CANVAS =====
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const SIZE = 480;
+const PAD = 50;
+const GRID = (SIZE - 2 * PAD) / 6;
+
+function posToPixel(idx) {
+  const [r, c] = POS_COORDS[idx];
+  return [PAD + c * GRID, PAD + r * GRID];
+}
+
+// ===== SPEECH =====
+function speak(text, queue) {
+  if (!voiceEnabled || !window.speechSynthesis) return;
+  if (!queue) window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'de-DE';
+  u.rate = 1.05;
+  const voices = speechSynthesis.getVoices();
+  const de = voices.find(v => v.lang.startsWith('de'));
+  if (de) u.voice = de;
+  speechSynthesis.speak(u);
+}
+if (speechSynthesis.onvoiceschanged !== undefined) {
+  speechSynthesis.onvoiceschanged = () => {};
+}
+function toggleVoice() {
+  voiceEnabled = document.getElementById('voiceOn').checked;
+  document.getElementById('voiceStatus').textContent = voiceEnabled ? '🔊 Sprache an' : '🔇 Sprache aus';
+}
+
+// ===== DRAWING =====
+function draw() {
+  ctx.clearRect(0, 0, SIZE, SIZE);
+
+  // Background
+  ctx.fillStyle = '#16213e';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  // Draw lines
+  ctx.strokeStyle = '#533483';
+  ctx.lineWidth = 2.5;
+
+  // Outer square
+  drawLine(0,1); drawLine(1,2);
+  drawLine(0,9); drawLine(2,14);
+  drawLine(9,21); drawLine(14,23);
+  drawLine(21,22); drawLine(22,23);
+
+  // Middle square
+  drawLine(3,4); drawLine(4,5);
+  drawLine(3,10); drawLine(5,13);
+  drawLine(10,18); drawLine(13,20);
+  drawLine(18,19); drawLine(19,20);
+
+  // Inner square
+  drawLine(6,7); drawLine(7,8);
+  drawLine(6,11); drawLine(8,12);
+  drawLine(11,15); drawLine(12,17);
+  drawLine(15,16); drawLine(16,17);
+
+  // Cross connections
+  drawLine(1,4); drawLine(4,7);
+  drawLine(9,10); drawLine(10,11);
+  drawLine(12,13); drawLine(13,14);
+  drawLine(16,19); drawLine(19,22);
+
+  // Draw points and stones
+  for (let i = 0; i < 24; i++) {
+    const [x, y] = posToPixel(i);
+
+    if (board[i] === 0) {
+      // Empty point
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = (i === selectedPos) ? '#e94560' : '#533483';
+      ctx.fill();
+
+      // Highlight valid targets
+      if (mustRemove && board[i] !== 0) {} // handled below
+      if (!mustRemove && !gameOver && selectedPos >= 0 && board[i] === 0) {
+        const canJump = getPhaseForPlayer(currentPlayer) === 'jump';
+        if (canJump || ADJ[selectedPos].includes(i)) {
+          ctx.beginPath();
+          ctx.arc(x, y, 12, 0, Math.PI * 2);
+          ctx.strokeStyle = '#a8e6cf44';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.strokeStyle = '#533483';
+          ctx.lineWidth = 2.5;
+        }
+      }
+    } else {
+      // Stone
+      ctx.beginPath();
+      ctx.arc(x, y, 16, 0, Math.PI * 2);
+
+      if (i === selectedPos) {
+        ctx.fillStyle = board[i] === 1 ? '#ffffff' : '#444';
+        ctx.fill();
+        ctx.strokeStyle = '#e94560';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#533483';
+      } else {
+        const isRemovable = mustRemove && board[i] === opponent() && canRemoveStone(i);
+        ctx.fillStyle = board[i] === 1 ? '#e8e8e8' : '#333';
+        ctx.fill();
+        if (isRemovable) {
+          ctx.strokeStyle = '#ff6b6b';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.strokeStyle = '#533483';
+          ctx.lineWidth = 2.5;
+        } else {
+          ctx.strokeStyle = board[i] === 1 ? '#bbb' : '#555';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = '#533483';
+        }
+      }
+    }
+  }
+
+  // Labels
+  ctx.font = '11px monospace';
+  ctx.fillStyle = '#555';
+  for (let i = 0; i < 24; i++) {
+    const [x, y] = posToPixel(i);
+    ctx.fillText(POS_NAMES[i], x - 8, y - 22);
+  }
+}
+
+function drawLine(a, b) {
+  const [x1, y1] = posToPixel(a);
+  const [x2, y2] = posToPixel(b);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+// ===== GAME LOGIC =====
+function opponent() { return currentPlayer === 1 ? 2 : 1; }
+
+function playerName(p) { return p === 1 ? 'Spieler 1, Weiß' : 'Spieler 2, Schwarz'; }
+function playerShort(p) { return p === 1 ? 'Weiß' : 'Schwarz'; }
+
+function getPhaseForPlayer(p) {
+  if (stonesInHand[p] > 0) return 'place';
+  const onBoard = board.filter(v => v === p).length;
+  if (onBoard <= 3) return 'jump';
+  return 'move';
+}
+
+function stonesOnBoard(p) { return board.filter(v => v === p).length; }
+
+function formsMill(pos, player) {
+  return MILLS.some(m => m.includes(pos) && m.every(i => board[i] === player));
+}
+
+function canRemoveStone(pos) {
+  const opp = opponent();
+  if (board[pos] !== opp) return false;
+  // Can't remove from mill unless all opponent stones are in mills
+  if (formsMill(pos, opp)) {
+    const allInMills = board.every((v, i) => v !== opp || formsMill(i, opp));
+    return allInMills;
+  }
+  return true;
+}
+
+function hasValidMoves(p) {
+  if (stonesInHand[p] > 0) return true;
+  const phase = getPhaseForPlayer(p);
+  if (phase === 'jump') return board.some(v => v === 0); // can jump anywhere empty
+  // move phase: check adjacency
+  for (let i = 0; i < 24; i++) {
+    if (board[i] !== p) continue;
+    for (const n of ADJ[i]) {
+      if (board[n] === 0) return true;
+    }
+  }
+  return false;
+}
+
+function checkPlayerLost(p) {
+  const other = p === 1 ? 2 : 1;
+  if (stonesInHand[p] === 0 && stonesOnBoard(p) < 3) {
+    gameOver = true;
+    const msg = `${playerName(other)} gewinnt! ${playerShort(p)} hat zu wenige Steine.`;
+    setStatus(msg);
+    speak(msg);
+    return true;
+  }
+  if (stonesInHand[p] === 0 && !hasValidMoves(p)) {
+    gameOver = true;
+    const msg = `${playerName(other)} gewinnt! ${playerShort(p)} kann nicht mehr ziehen.`;
+    setStatus(msg);
+    speak(msg);
+    return true;
+  }
+  return false;
+}
+
+function switchTurn() {
+  const nextPlayer = opponent();
+  if (checkPlayerLost(nextPlayer)) return;
+  currentPlayer = nextPlayer;
+  selectedPos = -1;
+  updateUI();
+}
+
+// ===== CLICK HANDLING =====
+canvas.addEventListener('click', e => {
+  if (gameOver) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (SIZE / rect.width);
+  const my = (e.clientY - rect.top) * (SIZE / rect.height);
+
+  // Find closest position
+  let closest = -1, minD = 24;
+  for (let i = 0; i < 24; i++) {
+    const [px, py] = posToPixel(i);
+    const d = Math.hypot(mx - px, my - py);
+    if (d < minD) { minD = d; closest = i; }
+  }
+  if (closest === -1) return;
+
+  if (mustRemove) {
+    handleRemove(closest);
+  } else {
+    handlePlaceOrMove(closest);
+  }
+});
+
+function handleRemove(pos) {
+  if (board[pos] === 0) {
+    speak('Dieses Feld ist leer.');
+    return;
+  }
+  if (board[pos] === currentPlayer) {
+    speak('Das ist dein eigener Stein.');
+    return;
+  }
+  if (!canRemoveStone(pos)) {
+    speak('Diesen Stein kannst du nicht entfernen. Er ist in einer Mühle.');
+    return;
+  }
+  board[pos] = 0;
+  capturedBy[currentPlayer]++;
+  speak(`${POS_NAMES[pos]} entfernt!`);
+  mustRemove = false;
+  draw();
+  switchTurn();
+}
+
+function hasRemovableStones() {
+  const opp = opponent();
+  for (let i = 0; i < 24; i++) {
+    if (board[i] === opp && canRemoveStone(i)) return true;
+  }
+  return false;
+}
+
+function handlePlaceOrMove(pos) {
+  const phase = getPhaseForPlayer(currentPlayer);
+
+  if (phase === 'place') {
+    if (board[pos] !== 0) {
+      speak('Dieses Feld ist besetzt.');
+      return;
+    }
+    board[pos] = currentPlayer;
+    stonesInHand[currentPlayer]--;
+    speak(`${playerShort(currentPlayer)} setzt auf ${POS_NAMES[pos]}.`);
+
+    if (formsMill(pos, currentPlayer) && hasRemovableStones()) {
+      mustRemove = true;
+      speak('Mühle! Entferne einen gegnerischen Stein.', true);
+      setStatus(`Mühle! ${playerName(currentPlayer)} — entferne einen Stein.`);
+      draw();
+      return;
+    }
+    draw();
+    switchTurn();
+
+  } else {
+    // move or jump phase
+    if (selectedPos === -1) {
+      // Select own stone
+      if (board[pos] !== currentPlayer) {
+        speak('Das ist nicht dein Stein.');
+        return;
+      }
+      selectedPos = pos;
+      speak(`${POS_NAMES[pos]} ausgewählt.`);
+      draw();
+    } else if (pos === selectedPos) {
+      // Deselect
+      selectedPos = -1;
+      draw();
+    } else if (board[pos] === currentPlayer) {
+      // Re-select different own stone
+      selectedPos = pos;
+      speak(`${POS_NAMES[pos]} ausgewählt.`);
+      draw();
+    } else {
+      // Try to move
+      if (board[pos] !== 0) {
+        speak('Dieses Feld ist besetzt.');
+        return;
+      }
+      const canJump = phase === 'jump';
+      if (!canJump && !ADJ[selectedPos].includes(pos)) {
+        speak('Ungültiger Zug. Nur auf benachbarte Felder.');
+        return;
+      }
+      board[pos] = currentPlayer;
+      board[selectedPos] = 0;
+      speak(`${playerShort(currentPlayer)} zieht von ${POS_NAMES[selectedPos]} nach ${POS_NAMES[pos]}.`);
+      selectedPos = -1;
+
+      if (formsMill(pos, currentPlayer) && hasRemovableStones()) {
+        mustRemove = true;
+        speak('Mühle! Entferne einen gegnerischen Stein.', true);
+        setStatus(`Mühle! ${playerName(currentPlayer)} — entferne einen Stein.`);
+        draw();
+        return;
+      }
+      draw();
+      switchTurn();
+    }
+  }
+}
+
+// ===== UI =====
+function updateUI() {
+  const phase = getPhaseForPlayer(currentPlayer);
+  const phaseName = phase === 'place' ? 'Stein setzen' : phase === 'move' ? 'Stein ziehen' : 'Stein springen';
+  const phaseLabel = phase === 'place' ? 'Setzphase' : phase === 'move' ? 'Zugphase' : 'Sprungphase';
+
+  if (!gameOver) {
+    setStatus(`${playerName(currentPlayer)} ist dran — ${phaseName}`);
+    document.getElementById('phaseInfo').textContent = phaseLabel;
+  }
+
+  document.getElementById('stones1').textContent = `Steine in Hand: ${stonesInHand[1]}`;
+  document.getElementById('stones2').textContent = `Steine in Hand: ${stonesInHand[2]}`;
+  document.getElementById('onboard1').textContent = `Auf dem Brett: ${stonesOnBoard(1)}`;
+  document.getElementById('onboard2').textContent = `Auf dem Brett: ${stonesOnBoard(2)}`;
+  document.getElementById('cap1').textContent = `Gefangen: ${capturedBy[1]}`;
+  document.getElementById('cap2').textContent = `Gefangen: ${capturedBy[2]}`;
+
+  document.getElementById('card1').classList.toggle('active', currentPlayer === 1 && !gameOver);
+  document.getElementById('card2').classList.toggle('active', currentPlayer === 2 && !gameOver);
+
+  draw();
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+function newGame() {
+  board = Array(24).fill(0);
+  currentPlayer = 1;
+  stonesInHand = [0, 9, 9];
+  capturedBy = [0, 0, 0];
+  selectedPos = -1;
+  mustRemove = false;
+  gameOver = false;
+  updateUI();
+  speak('Neues Spiel! Spieler 1, Weiß, beginnt.');
+}
+
+// ===== INIT =====
+newGame();
+</script>
+</body>
+</html>
