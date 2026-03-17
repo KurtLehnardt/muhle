@@ -45,7 +45,7 @@
     padding: 12px 18px;
     background: #16213e;
     border-radius: 10px;
-    max-width: 600px;
+    max-width: 480px;
     width: 100%;
   }
   .ai-controls label {
@@ -84,18 +84,20 @@
     min-width: 30px;
   }
 
-  .game-area { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+  .game-area { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 
   .board-wrap { position: relative; }
   canvas { cursor: pointer; border-radius: 10px; }
 
   .info-panel {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 12px;
-    min-width: 180px;
+    width: 100%;
+    max-width: 480px;
   }
   .player-card {
+    flex: 1;
     padding: 14px;
     border-radius: 10px;
     background: #16213e;
@@ -103,9 +105,9 @@
     transition: border-color 0.3s;
   }
   .player-card.active { border-color: #e94560; }
-  .player-card h3 { font-size: 1rem; margin-bottom: 6px; }
-  .player-card .stones { font-size: 0.9rem; color: #aaa; }
-  .player-card .on-board { font-size: 0.9rem; color: #a8e6cf; }
+  .player-card h3 { font-size: 0.95rem; margin-bottom: 6px; }
+  .player-card .stones { font-size: 0.85rem; color: #aaa; }
+  .player-card .on-board { font-size: 0.85rem; color: #a8e6cf; }
   .player-card .captured { font-size: 0.85rem; color: #e94560; }
 
   .status {
@@ -114,7 +116,7 @@
     color: #a8e6cf;
     min-height: 28px;
     text-align: center;
-    max-width: 500px;
+    max-width: 480px;
   }
   .phase-info {
     font-size: 0.85rem;
@@ -123,7 +125,7 @@
   }
   .rules {
     margin-top: 20px;
-    max-width: 500px;
+    max-width: 480px;
     background: #16213e;
     padding: 16px;
     border-radius: 10px;
