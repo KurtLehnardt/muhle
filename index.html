@@ -211,6 +211,54 @@
     background: #533483;
   }
   .modal button.secondary:hover { background: #6a42a0; }
+
+  /* Tutorial */
+  .tutorial-tooltip {
+    position: absolute;
+    top: -80px;
+    left: 0;
+    right: 0;
+    background: rgba(22, 33, 62, 0.95);
+    border: 1px solid #533483;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 0.9rem;
+    color: #eee;
+    line-height: 1.4;
+    z-index: 50;
+    text-align: center;
+    animation: tutFadeIn 0.3s ease;
+  }
+  .tutorial-tooltip .tutorial-btn {
+    margin-top: 10px;
+    padding: 6px 16px;
+    font-size: 0.85rem;
+    display: inline-block;
+  }
+  .tutorial-tooltip .tutorial-feedback {
+    color: #a8e6cf;
+    margin-top: 6px;
+    font-size: 0.85rem;
+  }
+  .tutorial-tooltip ul {
+    text-align: left;
+    display: inline-block;
+    margin-top: 6px;
+    padding-left: 18px;
+  }
+  .tutorial-tooltip ul li {
+    margin-bottom: 3px;
+  }
+  @keyframes tutFadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  #tutorialBtn {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    background: #533483;
+  }
+  #tutorialBtn:hover { background: #6a42a0; }
 </style>
 </head>
 <body>
@@ -218,6 +266,7 @@
 <div class="subtitle">Neun-Steine-Spiel mit deutscher Sprachausgabe</div>
 <div class="controls">
   <button onclick="newGame()">Neues Spiel</button>
+  <button id="tutorialBtn" onclick="startTutorialFromButton()">Tutorial</button>
   <label class="voice-toggle">
     <input type="checkbox" id="voiceOn" checked onchange="toggleVoice()">
     <span id="voiceStatus">🔊 Sprache an</span>
@@ -268,6 +317,7 @@
       <div class="avatar-name" id="avatarName1">Spieler 1</div>
     </div>
     <div class="board-wrap">
+      <div class="tutorial-tooltip" id="tutorialTooltip" style="display:none;"></div>
       <canvas id="board" width="480" height="480" role="img" aria-label="Mühle Spielbrett"></canvas>
     </div>
     <div class="avatar-panel" id="avatar2">
@@ -310,6 +360,17 @@
     <div class="modal-buttons">
       <button onclick="closeModal(); newGame();">Nochmal spielen</button>
       <button class="secondary" onclick="closeModal(); showModeChange();">Modus wechseln</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="welcomeModal">
+  <div class="modal">
+    <h2>Willkommen bei Mühle!</h2>
+    <div class="modal-msg">Zum ersten Mal hier? Lerne die Grundlagen in einem kurzen Tutorial.</div>
+    <div class="modal-buttons">
+      <button onclick="closeWelcome(); startTutorial();">Tutorial starten</button>
+      <button class="secondary" onclick="closeWelcome(); skipTutorial();">Direkt spielen</button>
     </div>
   </div>
 </div>
@@ -528,6 +589,36 @@ function draw() {
     const [x, y] = posToPixel(i);
     ctx.fillText(POS_NAMES[i], x - 8, y - 22);
   }
+
+  // Tutorial pulsing highlight
+  if (tutorialActive && tutorialStep < TUTORIAL_STEPS.length) {
+    const step = TUTORIAL_STEPS[tutorialStep];
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
+    if (step.highlightPos !== undefined && step.highlightPos !== null) {
+      const [hx, hy] = posToPixel(step.highlightPos);
+      ctx.beginPath();
+      ctx.arc(hx, hy, 20 + pulse * 6, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(168, 230, 207, ${0.4 + pulse * 0.4})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#533483';
+    } else if (step.highlightAnyBlack) {
+      // Highlight all black stones
+      for (let i = 0; i < 24; i++) {
+        if (board[i] === 2) {
+          const [hx, hy] = posToPixel(i);
+          ctx.beginPath();
+          ctx.arc(hx, hy, 20 + pulse * 6, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(168, 230, 207, ${0.4 + pulse * 0.4})`;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+      }
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#533483';
+    }
+  }
 }
 
 function drawLine(a, b) {
@@ -625,8 +716,6 @@ function switchTurn() {
 
 // ===== CLICK HANDLING =====
 canvas.addEventListener('click', e => {
-  if (gameOver) return;
-  if (playerMode[currentPlayer] === 'ai') return;
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (SIZE / rect.width);
   const my = (e.clientY - rect.top) * (SIZE / rect.height);
@@ -639,6 +728,15 @@ canvas.addEventListener('click', e => {
     if (d < minD) { minD = d; closest = i; }
   }
   if (closest === -1) return;
+
+  // Tutorial intercept
+  if (tutorialActive) {
+    tutorialHandleClick(closest);
+    return;
+  }
+
+  if (gameOver) return;
+  if (playerMode[currentPlayer] === 'ai') return;
 
   if (mustRemove) {
     handleRemove(closest);
@@ -1383,8 +1481,293 @@ function newGame() {
   maybeAIMove();
 }
 
+// ===== TUTORIAL SYSTEM =====
+let tutorialActive = false;
+let tutorialStep = 0;
+let tutorialAnimFrame = null;
+let tutorialFeedbackTimeout = null;
+
+const TUTORIAL_STEPS = [
+  {
+    instruction: 'Du bist Weiß und beginnst. Setze deinen ersten Stein auf eine Kreuzung — Positionen mit vielen Verbindungen sind stark. Klicke auf Position D2.',
+    highlightPos: 10,
+    expectedPos: 10,
+    action: 'place',
+    feedback: 'Gut! D2 hat 4 Nachbarn — eine starke Position.',
+    autoPlace: { pos: 4, player: 2 }
+  },
+  {
+    instruction: 'Versuche, Steine in einer Reihe zu setzen, um eine Mühle zu bilden. Setze auf B2.',
+    highlightPos: 3,
+    expectedPos: 3,
+    action: 'place',
+    feedback: 'Zwei Steine in der Linie B2-D2! Noch einer für eine Mühle.',
+    autoPlace: { pos: 1, player: 2 }
+  },
+  {
+    instruction: 'Jetzt vervollständige deine erste Mühle! Setze auf F2.',
+    highlightPos: 18,
+    expectedPos: 18,
+    action: 'place',
+    feedback: 'Mühle! Drei in einer Reihe: B2-D2-F2. Du darfst jetzt einen schwarzen Stein entfernen.'
+  },
+  {
+    instruction: 'Entferne einen gegnerischen Stein. Klicke auf den schwarzen Stein bei B4.',
+    highlightPos: 4,
+    expectedPos: 4,
+    action: 'remove',
+    feedback: 'Perfekt! Mühlen bilden ist der Schlüssel zum Sieg.',
+    autoPlace: { pos: 7, player: 2 }
+  },
+  {
+    instruction: 'Strategie-Tipp: Versuche, zwei Mühlen zu planen, die sich ein Feld teilen — eine Zwickmühle! Setze auf D1.',
+    highlightPos: 9,
+    expectedPos: 9,
+    action: 'place',
+    feedback: 'D1 teilt sich die Linien D1-D2-D3 und A1-D1-G1. Wenn du beide Mühlen aufbaust, kannst du sie abwechselnd öffnen und schließen!',
+    autoPlace: { pos: 13, player: 2 }
+  },
+  {
+    instruction: 'Setze auf D3, um die zweite Mühlenreihe vorzubereiten.',
+    highlightPos: 11,
+    expectedPos: 11,
+    action: 'place',
+    feedback: 'Sehr gut! Du hast jetzt D1-D2-D3 — noch eine Mühle! Entferne einen schwarzen Stein.'
+  },
+  {
+    instruction: 'Entferne einen schwarzen Stein vom Brett.',
+    highlightPos: null,
+    highlightAnyBlack: true,
+    expectedPos: null,
+    action: 'removeAny',
+    feedback: 'Du hast das Grundprinzip verstanden!'
+  },
+  {
+    instruction: null,
+    action: 'summary'
+  }
+];
+
+function closeWelcome() {
+  document.getElementById('welcomeModal').classList.remove('show');
+}
+
+function skipTutorial() {
+  localStorage.setItem('muhle_tutorial_seen', '1');
+  newGame();
+}
+
+function startTutorialFromButton() {
+  startTutorial();
+}
+
+function startTutorial() {
+  // Reset game first
+  if (aiTimeoutId !== null) {
+    clearTimeout(aiTimeoutId);
+    aiTimeoutId = null;
+  }
+  aiThinking = false;
+  aiPaused = false;
+  closeModal();
+
+  board = Array(24).fill(0);
+  currentPlayer = 1;
+  stonesInHand = [0, 9, 9];
+  capturedBy = [0, 0, 0];
+  selectedPos = -1;
+  mustRemove = false;
+  gameOver = false;
+  movesSinceCapture = 0;
+
+  // Force human vs human mode for tutorial
+  gameMode = 'hvh';
+  playerMode = [null, 'human', 'human'];
+  playerPersonality = [null, null, null];
+  document.getElementById('modeSelect').value = 'hvh';
+  document.getElementById('p1PersonalityGroup').classList.add('hidden');
+  document.getElementById('p2PersonalityGroup').classList.add('hidden');
+  document.getElementById('pauseGroup').classList.add('hidden');
+  document.getElementById('speedGroup').classList.add('hidden');
+
+  // Disable AI controls during tutorial
+  document.getElementById('modeSelect').disabled = true;
+
+  tutorialActive = true;
+  tutorialStep = 0;
+
+  updateUI();
+  showTutorialStep();
+  tutorialAnimate();
+  speak('Willkommen zum Tutorial! Lerne die Grundlagen von Mühle.');
+}
+
+function endTutorial() {
+  tutorialActive = false;
+  tutorialStep = 0;
+  if (tutorialAnimFrame) {
+    cancelAnimationFrame(tutorialAnimFrame);
+    tutorialAnimFrame = null;
+  }
+  if (tutorialFeedbackTimeout) {
+    clearTimeout(tutorialFeedbackTimeout);
+    tutorialFeedbackTimeout = null;
+  }
+  hideTutorialTooltip();
+  document.getElementById('modeSelect').disabled = false;
+  localStorage.setItem('muhle_tutorial_seen', '1');
+  newGame();
+}
+
+function showTutorialStep() {
+  const step = TUTORIAL_STEPS[tutorialStep];
+  if (!step) { endTutorial(); return; }
+
+  const tooltip = document.getElementById('tutorialTooltip');
+
+  if (step.action === 'summary') {
+    tooltip.innerHTML = `
+      <div>Du kennst jetzt die Grundlagen:</div>
+      <ul>
+        <li>Setze Steine auf Kreuzungen mit vielen Verbindungen</li>
+        <li>Bilde Mühlen (3 in einer Reihe) um gegnerische Steine zu entfernen</li>
+        <li>Plane Zwickmühlen — zwei Mühlen, die sich ein Feld teilen</li>
+        <li>In der Zugphase bewegst du Steine auf benachbarte Felder</li>
+        <li>Mit nur 3 Steinen darfst du springen — überall hin!</li>
+        <li>Dein Gegner verliert, wenn er nur noch 2 Steine hat oder nicht mehr ziehen kann.</li>
+      </ul>
+      <div style="margin-top:8px;color:#a8e6cf;">Viel Spaß!</div>
+      <button class="tutorial-btn" onclick="endTutorial()">Spiel starten!</button>
+    `;
+    tooltip.style.display = 'block';
+    speak('Du kennst jetzt die Grundlagen. Viel Spaß beim Spielen!');
+    return;
+  }
+
+  tooltip.innerHTML = step.instruction;
+  tooltip.style.display = 'block';
+  speak(step.instruction);
+}
+
+function hideTutorialTooltip() {
+  document.getElementById('tutorialTooltip').style.display = 'none';
+}
+
+function showTutorialFeedback(feedbackText, callback) {
+  const tooltip = document.getElementById('tutorialTooltip');
+  tooltip.innerHTML = `<div class="tutorial-feedback">${feedbackText}</div>`;
+  tooltip.style.display = 'block';
+  speak(feedbackText);
+  tutorialFeedbackTimeout = setTimeout(() => {
+    if (callback) callback();
+  }, 2500);
+}
+
+function tutorialAnimate() {
+  if (!tutorialActive) return;
+  draw();
+  tutorialAnimFrame = requestAnimationFrame(tutorialAnimate);
+}
+
+function tutorialHandleClick(pos) {
+  const step = TUTORIAL_STEPS[tutorialStep];
+  if (!step || step.action === 'summary') return;
+
+  if (step.action === 'place') {
+    if (pos !== step.expectedPos) {
+      speak('Klicke auf die markierte Position!');
+      return;
+    }
+    // Place white stone via game logic
+    board[pos] = currentPlayer;
+    stonesInHand[currentPlayer]--;
+    speak(`${playerShort(currentPlayer)} setzt auf ${POS_NAMES[pos]}.`);
+
+    // Check if mill formed
+    const millFormed = formsMill(pos, currentPlayer) && hasRemovableStones();
+    if (millFormed) {
+      mustRemove = true;
+    }
+
+    draw();
+    updateUI();
+
+    showTutorialFeedback(step.feedback, () => {
+      if (step.autoPlace) {
+        // Auto place opponent stone
+        board[step.autoPlace.pos] = step.autoPlace.player;
+        stonesInHand[step.autoPlace.player]--;
+        speak(`Schwarz setzt auf ${POS_NAMES[step.autoPlace.pos]}.`);
+        // Switch back to white
+        currentPlayer = 1;
+        mustRemove = false;
+        draw();
+        updateUI();
+      }
+      tutorialStep++;
+      showTutorialStep();
+    });
+
+  } else if (step.action === 'remove') {
+    if (pos !== step.expectedPos) {
+      speak('Klicke auf die markierte Position!');
+      return;
+    }
+    if (board[pos] === 0 || board[pos] === currentPlayer) {
+      speak('Klicke auf die markierte Position!');
+      return;
+    }
+    board[pos] = 0;
+    capturedBy[currentPlayer]++;
+    mustRemove = false;
+    speak(`${POS_NAMES[pos]} entfernt!`);
+    draw();
+    updateUI();
+
+    showTutorialFeedback(step.feedback, () => {
+      if (step.autoPlace) {
+        board[step.autoPlace.pos] = step.autoPlace.player;
+        stonesInHand[step.autoPlace.player]--;
+        speak(`Schwarz setzt auf ${POS_NAMES[step.autoPlace.pos]}.`);
+        currentPlayer = 1;
+        draw();
+        updateUI();
+      }
+      tutorialStep++;
+      showTutorialStep();
+    });
+
+  } else if (step.action === 'removeAny') {
+    // Remove any black stone
+    if (board[pos] !== 2) {
+      speak('Klicke auf einen schwarzen Stein!');
+      return;
+    }
+    board[pos] = 0;
+    capturedBy[currentPlayer]++;
+    mustRemove = false;
+    speak(`${POS_NAMES[pos]} entfernt!`);
+    draw();
+    updateUI();
+
+    showTutorialFeedback(step.feedback, () => {
+      currentPlayer = 1;
+      tutorialStep++;
+      showTutorialStep();
+    });
+  }
+}
+
 // ===== INIT =====
-newGame();
+(function init() {
+  // Check for first-time visitor
+  if (!localStorage.getItem('muhle_tutorial_seen')) {
+    newGame();
+    document.getElementById('welcomeModal').classList.add('show');
+  } else {
+    newGame();
+  }
+})();
 </script>
 </body>
 </html>
