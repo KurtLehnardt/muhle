@@ -1465,6 +1465,13 @@ function showModeChange() {
 }
 
 function newGame() {
+  // If tutorial is running, end it cleanly
+  if (tutorialActive) {
+    tutorialActive = false;
+    if (tutorialAnimFrame) { cancelAnimationFrame(tutorialAnimFrame); tutorialAnimFrame = null; }
+    if (tutorialFeedbackTimeout) { clearTimeout(tutorialFeedbackTimeout); tutorialFeedbackTimeout = null; }
+    document.getElementById('tutorialTooltip').style.display = 'none';
+  }
   // Clear any pending AI timeout
   if (aiTimeoutId !== null) {
     clearTimeout(aiTimeoutId);
