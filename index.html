@@ -246,6 +246,15 @@
     margin-top: 6px;
     padding-left: 18px;
   }
+  .tutorial-skip {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 0.75rem;
+    color: #888;
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  .tutorial-skip:hover { color: #e94560; }
   .tutorial-tooltip ul li {
     margin-bottom: 3px;
   }
@@ -1644,7 +1653,7 @@ function showTutorialStep() {
     return;
   }
 
-  tooltip.innerHTML = step.instruction;
+  tooltip.innerHTML = step.instruction + '<br><a href="#" class="tutorial-skip" onclick="event.preventDefault(); endTutorial();">Tutorial beenden</a>';
   tooltip.style.display = 'block';
   speak(step.instruction);
 }
@@ -1655,7 +1664,7 @@ function hideTutorialTooltip() {
 
 function showTutorialFeedback(feedbackText, callback) {
   const tooltip = document.getElementById('tutorialTooltip');
-  tooltip.innerHTML = `<div class="tutorial-feedback">${feedbackText}</div>`;
+  tooltip.innerHTML = `<div class="tutorial-feedback">${feedbackText}</div><a href="#" class="tutorial-skip" onclick="event.preventDefault(); endTutorial();">Tutorial beenden</a>`;
   tooltip.style.display = 'block';
   speak(feedbackText);
   tutorialFeedbackTimeout = setTimeout(() => {
