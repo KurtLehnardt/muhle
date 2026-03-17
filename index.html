@@ -164,6 +164,53 @@
     color: #aaa;
   }
   .rules summary { color: #e94560; cursor: pointer; font-size: 0.95rem; margin-bottom: 8px; }
+
+  /* Game Over Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: #16213e;
+    border: 2px solid #533483;
+    border-radius: 14px;
+    padding: 30px 36px;
+    text-align: center;
+    max-width: 360px;
+    width: 90%;
+    box-shadow: 0 0 40px rgba(83,52,131,0.5);
+  }
+  .modal h2 {
+    font-size: 1.3rem;
+    color: #e94560;
+    margin-bottom: 8px;
+  }
+  .modal .modal-msg {
+    font-size: 0.95rem;
+    color: #ccc;
+    margin-bottom: 20px;
+    line-height: 1.4;
+  }
+  .modal .modal-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .modal button {
+    width: 100%;
+    padding: 10px 16px;
+    font-size: 0.95rem;
+  }
+  .modal button.secondary {
+    background: #533483;
+  }
+  .modal button.secondary:hover { background: #6a42a0; }
 </style>
 </head>
 <body>
@@ -255,6 +302,17 @@
   <p><strong>Mühle:</strong> Wer drei Steine in einer Reihe hat, darf einen gegnerischen Stein entfernen (nicht aus einer Mühle, es sei denn, alle Steine sind in Mühlen).</p>
   <p><strong>Gewonnen:</strong> Wer den Gegner auf 2 Steine reduziert oder ihm alle Züge blockiert, gewinnt.</p>
 </details>
+
+<div class="modal-overlay" id="gameOverModal">
+  <div class="modal">
+    <h2 id="modalTitle">Spiel beendet</h2>
+    <div class="modal-msg" id="modalMsg"></div>
+    <div class="modal-buttons">
+      <button onclick="closeModal(); newGame();">Nochmal spielen</button>
+      <button class="secondary" onclick="closeModal(); showModeChange();">Modus wechseln</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ===== BOARD TOPOLOGY =====
@@ -532,6 +590,7 @@ function checkPlayerLost(p) {
     const msg = `${playerName(other)} gewinnt! ${playerShort(p)} hat zu wenige Steine.`;
     setStatus(msg);
     speak(msg);
+    showGameOverModal(msg);
     return true;
   }
   if (stonesInHand[p] === 0 && !hasValidMoves(p)) {
@@ -539,6 +598,7 @@ function checkPlayerLost(p) {
     const msg = `${playerName(other)} gewinnt! ${playerShort(p)} kann nicht mehr ziehen.`;
     setStatus(msg);
     speak(msg);
+    showGameOverModal(msg);
     return true;
   }
   return false;
@@ -554,6 +614,7 @@ function switchTurn() {
     const msg = 'Unentschieden! 50 Züge ohne Steinentfernung.';
     setStatus(msg);
     speak(msg);
+    showGameOverModal(msg);
     return;
   }
   currentPlayer = nextPlayer;
@@ -1053,6 +1114,7 @@ function maybeAIMove() {
           const msg = `${playerName(winner)} gewinnt! ${playerShort(currentPlayer)} kann nicht mehr ziehen.`;
           setStatus(msg);
           speak(msg);
+          showGameOverModal(msg);
           updateUI();
         }
         return;
@@ -1121,11 +1183,36 @@ function updateSpeed() {
 // ===== AVATAR SVGs =====
 function humanSvg() {
   return `<svg width="80" height="100" viewBox="0 0 80 100" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="40" cy="30" r="18" fill="#a0b4c8" opacity="0.9"/>
-    <ellipse cx="40" cy="90" rx="30" ry="22" fill="#a0b4c8" opacity="0.7"/>
-    <circle cx="34" cy="27" r="2" fill="#16213e"/>
-    <circle cx="46" cy="27" r="2" fill="#16213e"/>
-    <path d="M35 35 Q40 40 45 35" stroke="#16213e" stroke-width="1.5" fill="none"/>
+    <!-- Hair -->
+    <ellipse cx="40" cy="22" rx="20" ry="18" fill="#8d6e63"/>
+    <!-- Face -->
+    <ellipse cx="40" cy="28" rx="16" ry="16" fill="#e8beac"/>
+    <!-- Hair top -->
+    <ellipse cx="40" cy="16" rx="18" ry="10" fill="#8d6e63"/>
+    <!-- Eyes -->
+    <ellipse cx="34" cy="26" rx="2.5" ry="3" fill="#3e2723"/>
+    <ellipse cx="46" cy="26" rx="2.5" ry="3" fill="#3e2723"/>
+    <circle cx="35" cy="25" r="0.8" fill="#fff"/>
+    <circle cx="47" cy="25" r="0.8" fill="#fff"/>
+    <!-- Eyebrows -->
+    <path d="M30 21 Q34 19 37 21" stroke="#6d4c41" stroke-width="1.2" fill="none"/>
+    <path d="M43 21 Q46 19 50 21" stroke="#6d4c41" stroke-width="1.2" fill="none"/>
+    <!-- Nose -->
+    <path d="M40 29 L38 33 L42 33" stroke="#d4a28e" stroke-width="1" fill="none"/>
+    <!-- Mouth -->
+    <path d="M35 36 Q40 40 45 36" stroke="#c97a6a" stroke-width="1.5" fill="none"/>
+    <!-- Neck -->
+    <rect x="36" y="43" width="8" height="8" rx="2" fill="#e8beac"/>
+    <!-- Body/Shirt -->
+    <path d="M20 96 L20 68 Q20 54 32 52 L40 50 L48 52 Q60 54 60 68 L60 96 Z" fill="#5c6bc0"/>
+    <!-- Collar -->
+    <path d="M32 52 L40 60 L48 52" fill="#4a5ab5" stroke="#3f51b5" stroke-width="0.5"/>
+    <!-- Arms -->
+    <path d="M20 68 L10 82" stroke="#5c6bc0" stroke-width="8" stroke-linecap="round"/>
+    <path d="M60 68 L70 82" stroke="#5c6bc0" stroke-width="8" stroke-linecap="round"/>
+    <!-- Hands -->
+    <circle cx="10" cy="84" r="4" fill="#e8beac"/>
+    <circle cx="70" cy="84" r="4" fill="#e8beac"/>
   </svg>`;
 }
 
@@ -1254,6 +1341,22 @@ function setStatus(msg) {
   document.getElementById('status').textContent = msg;
 }
 
+function showGameOverModal(msg) {
+  const isDraw = msg.includes('Unentschieden');
+  document.getElementById('modalTitle').textContent = isDraw ? 'Unentschieden!' : 'Spiel beendet!';
+  document.getElementById('modalMsg').textContent = msg;
+  document.getElementById('gameOverModal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('gameOverModal').classList.remove('show');
+}
+
+function showModeChange() {
+  // Focus the mode selector so the user can change it
+  document.getElementById('modeSelect').focus();
+}
+
 function newGame() {
   // Clear any pending AI timeout
   if (aiTimeoutId !== null) {
@@ -1263,6 +1366,7 @@ function newGame() {
   aiThinking = false;
   aiPaused = false;
   document.getElementById('pauseBtn').textContent = 'Pause';
+  closeModal();
 
   board = Array(24).fill(0);
   currentPlayer = 1;
