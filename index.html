@@ -294,6 +294,7 @@ let aiThinking = false;
 let aiPaused = false;
 let speedMultiplier = 1.0;
 let aiTimeoutId = null;
+let movesSinceCapture = 0;  // draw detection: 50 moves without capture = draw
 
 // ===== CANVAS =====
 const canvas = document.getElementById('board');
@@ -506,6 +507,15 @@ function checkPlayerLost(p) {
 function switchTurn() {
   const nextPlayer = opponent();
   if (checkPlayerLost(nextPlayer)) return;
+  // Draw detection: increment move counter (reset in handleRemove on capture)
+  movesSinceCapture++;
+  if (movesSinceCapture >= 50) {
+    gameOver = true;
+    const msg = 'Unentschieden! 50 Züge ohne Steinentfernung.';
+    setStatus(msg);
+    speak(msg);
+    return;
+  }
   currentPlayer = nextPlayer;
   selectedPos = -1;
   updateUI();
@@ -551,6 +561,7 @@ function handleRemove(pos) {
   }
   board[pos] = 0;
   capturedBy[currentPlayer]++;
+  movesSinceCapture = 0;  // reset draw counter on capture
   speak(`${POS_NAMES[pos]} entfernt!`);
   mustRemove = false;
   draw();
@@ -983,11 +994,29 @@ function maybeAIMove() {
     if (gameOver || aiPaused) { aiThinking = false; return; }
     if (mustRemove) {
       const pos = personality.chooseRemoval(board, currentPlayer, MILLS, canRemoveStone);
-      if (pos !== null) handleRemove(pos);
+      if (pos !== null && pos !== undefined) {
+        handleRemove(pos);
+      } else {
+        // No removable stones — skip removal, continue game
+        mustRemove = false;
+        switchTurn();
+      }
       aiThinking = false;
     } else {
       const move = personality.chooseMove(board, currentPlayer, stonesInHand, getPhaseForPlayer, ADJ, MILLS);
-      if (!move) { aiThinking = false; return; }
+      if (!move) {
+        // No valid moves — force game over
+        aiThinking = false;
+        if (!gameOver) {
+          gameOver = true;
+          const winner = currentPlayer === 1 ? 2 : 1;
+          const msg = `${playerName(winner)} gewinnt! ${playerShort(currentPlayer)} kann nicht mehr ziehen.`;
+          setStatus(msg);
+          speak(msg);
+          updateUI();
+        }
+        return;
+      }
       if (move.type === 'place') {
         handlePlaceOrMove(move.to);
       } else {
@@ -1106,6 +1135,7 @@ function newGame() {
   selectedPos = -1;
   mustRemove = false;
   gameOver = false;
+  movesSinceCapture = 0;
   updateUI();
   speak('Neues Spiel! Spieler 1, Weiß, beginnt.');
 
